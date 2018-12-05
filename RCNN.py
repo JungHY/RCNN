@@ -19,17 +19,37 @@ class BBOX :
         input_shape = keras.layers.CNN(특정 레이어).output_shape
         """
         self.input = keras.layers.Input(shape=input_shape)
+        self.build(self.input)
 
-    def train(self, input_feature_vectors, ground_truth_bboxs) :
+    def train(self, input_feature_vectors, ground_truth_bboxs, epoch=10, batch_size=10) :
         """
         Bounding Box Regressor model 학습
         optimizer, loss, metrics 지정
         """
-    def build(self, ) :
+
+        self.model.fit(input_feature_vectors, ground_truth_bboxs, epoch=epoch, batch_size=batch_size)
+
+
+    def build(self, input ) :
+
+        self.O1 = Flatten()(input)
+        self.O2 = Dense(100, activation='relu')(self.O1)
+        self.O3 = Dense(32, activation='relu')(self.O2)
+        self.output = Dense(4, activation='relu')(self.O3)
+
+        self.model = keras.models.Model(inputs=input, outputs=self.output)
+        ### model compile
+        self.model.compile(loss='mean_squared_error', optimizer='sgd')
+
         return None
 
     def feedforward(self, input_feature_vector) :
-        return None
+        """
+        CNN의 출력 fixed-length feature vector를 입력으로 Bounding Box를 출력
+        """
+        bbox = self.model.predict(input_feature_vector)
+
+        return bbox
     
 
 
