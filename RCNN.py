@@ -1,5 +1,6 @@
 import keras
 from keras.models import Sequential
+from keras.models import load_model
 from keras.layers.convolutional import Conv2D
 from keras.layers.convolutional import MaxPooling2D
 from keras.layers import Flatten
@@ -13,12 +14,13 @@ from mrcnn import model as modellib
 
 ## Bounding Box regression model
 class BBOX :
-    def __init__(self, input_shape) :
+    def __init__(self, input) :
         """
         CNN의 출력 fixed-length feature vector를 입력으로 Bounding Box를 표현하는 (x, y, w, h)를 출력
-        input_shape = keras.layers.CNN(특정 레이어).output_shape
+        input = CNN의 출력 feature vectors
+        output = bbox(x, y, w, h)
         """
-        self.input = keras.layers.Input(shape=input_shape)
+        self.input = input
         self.build(self.input)
 
     def train(self, input_feature_vectors, ground_truth_bboxs, epoch=10, batch_size=10) :
@@ -41,8 +43,6 @@ class BBOX :
         ### model compile
         self.model.compile(loss='mean_squared_error', optimizer='sgd')
 
-        return None
-
     def feedforward(self, input_feature_vector) :
         """
         CNN의 출력 fixed-length feature vector를 입력으로 Bounding Box를 출력
@@ -50,7 +50,53 @@ class BBOX :
         bbox = self.model.predict(input_feature_vector)
 
         return bbox
+
+    def save(self, name) :
+
+        self.model.save(name + '.h5')
+
     
+class CLASSIFIER :
+    def __init__(self, input, class_num) :
+        """
+        CNN의 출력 fixed-length feature vector를 입력으로 proposal region이 어떤 class에 속하는지 출력
+        input = CNN의 출력 feature vectors
+        output = class 분류 값
+        class_num = class의 개수
+        """
+        self.input = input
+        self.class_num = class_num
+
+    def build(self, input, class_num) :
+        """
+        classifier model build
+        """
+
+        self.O1 = Flatten()(input)
+        self.O2 = Dense(100, activation='relu')(self.O1)
+        self.O3 = Dense(32, activation='relu')(self.O2)
+        self.output = Dense(class_num+1, activation='softmax')
+
+        self.model = keras.models.Model(inputs=input, outputs=self.output)
+        self.model.compile(loss='categorical_crossentropy', optimizer='sgd')
+
+    def train(self, input_feature_vectors, ground_truth_classes, epoch=10, batch_size=10) :
+        """
+        Proposal Region Classifier model 학습
+        """
+        
+        self.model.fit(input_feature_vectors, ground_truth_classes, epoch=epoch, batch_size=batch_size)
+
+    def feedforward(self, input_feature_vector) :
+        
+        output_class = self.model.predict(input_feature_vector)
+
+        return output_class
+
+    def save(self, name) :
+        
+        self.model.save(name + '.h5')
+
 
 
 ## RCNN 모델을 만들고 학습하고 테스트하는 클래스
@@ -60,6 +106,13 @@ class R_CNN :
         ### + 1 for background class
         self.output_class = output_class + 1
         self.input_image = Input(shape=input_shape, name="input_image")
+
+        ### build CNN model & compile model
+        self.CNN_layers = self.BuildRCNN("resnet101")
+        ### build BBOX model & compile model
+        self.BBOX_model = BBOX(self.CNN_layers[4])
+        ### build Classifier model & compile model
+        self.CLS_model = CLASSIFIER(self.CNN_layers[4], self.output_class)    
 
     def getIoU(self, scRegion, gtRegion) :
         """
@@ -126,11 +179,19 @@ class R_CNN :
 
     ## model 만들기 
     def BuildRCNN(self, architecture) :
-        C1,C2,C3,C4,C5 = modellib.resnet_graph(input_image=self.input_image, architecture=architecture, stage5=True, train_bn=True)
-    
+        self.C1,self.C2,self.C3,self.C4,self.C5 = modellib.resnet_graph(input_image=self.input_image, architecture=architecture, stage5=True, train_bn=True)
+
+        CNN_layers = [self.C1, self.C2, self.C3, self.C4, self.C5]
+        self.F1 = Flatten()(self.C5)
+        self.D1 = Dense(128, activation='relu')(self.F1)
+        self.D2 = Dense(self.output_class, activation='softmax')(self.D1)
+
+        self.model = keras.models.Model(inputs=self.input_image, outputs=self.D2)
+        self.model.compile(loss='categorical_crossentropy', optimizer='sgd')
+        return CNN_layers
 
     ## model 훈련
-    def TrainRCNN(self, input_images_dir) :
+    def TrainCNN(self, input_images_dir, gtBBoxes) :
 
         ## 1. image directory에서 이미지들 불러오기
         ## 2. (필요시) 픽셀값 0 ~ 1 normalize
@@ -140,6 +201,10 @@ class R_CNN :
         ## 6. ground truth의 bounding box와 비교해서 IoU가 0.7 미만인 region의 대해서 추출
         ## 7. positive class와 negative class의 비율 조절
         ## 8. ResNet 모델 학습
+
+
+
+
         return None
 
     ## image test
