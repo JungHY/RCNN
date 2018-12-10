@@ -9,6 +9,7 @@ from keras.layers import Input
 import numpy as np
 import skimage.data
 import selectivesearch
+import os
 
 from mrcnn import model as modellib
 
@@ -50,6 +51,10 @@ class BBOX :
         bbox = self.model.predict(input_feature_vector)
 
         return bbox
+
+    def getOutput(self) :
+
+        return self.output
 
     def save(self, name) :
 
@@ -93,6 +98,9 @@ class CLASSIFIER :
 
         return output_class
 
+    def getOutput(self) :
+        return self.output
+
     def save(self, name) :
         
         self.model.save(name + '.h5')
@@ -101,18 +109,18 @@ class CLASSIFIER :
 
 ## RCNN 모델을 만들고 학습하고 테스트하는 클래스
 class R_CNN :
-    def __init__(self, input_shape, output_class) :
-        self.input_shape = input_shape
+    def __init__(self, warp_shape, output_class) :
+        self.warp_shape = warp_shape
         ### + 1 for background class
         self.output_class = output_class + 1
-        self.input_image = Input(shape=input_shape, name="input_image")
+        self.input_image = Input(shape=warp_shape, name="input_image")
 
         ### build CNN model & compile model
         self.CNN_layers = self.BuildRCNN("resnet101")
         ### build BBOX model & compile model
         self.BBOX_model = BBOX(self.CNN_layers[4])
         ### build Classifier model & compile model
-        self.CLS_model = CLASSIFIER(self.CNN_layers[4], self.output_class)    
+        self.CLS_model = CLASSIFIER(self.CNN_layers[4], self.output_class)
 
     def getIoU(self, scRegion, gtRegion) :
         """
@@ -151,7 +159,7 @@ class R_CNN :
 
         ### selective search output
         ### [ {'labels': [0.1], 'rect':(0, 0, 15, 25), 'size':260}, --- ]
-        scRegions = selectivesearch.selective_search(input_image)
+        _, scRegions = selectivesearch.selective_search(input_image)
 
         ### candidate regions 와 background regions
         proposalRegions_idxs = []
@@ -174,7 +182,16 @@ class R_CNN :
 
         return proposalRegions, backgrounRegions
 
+    def RegionWarp(self, input_image, region) :
 
+        ### input_image 원본 이미지
+        ### warping 할 영역 (x, y, h, w)
+        ### warping 할 크기 (h, w)
+
+        region_image = input_image[region.y:region.y+h, region.x:region.x+w]
+        warp_region_image = skimage.transform.warp(region_image, skimage.transform.SimilarityTransform, output_shape=self.warp_shape)
+
+        return warp_region_image
 
 
     ## model 만들기 
@@ -186,12 +203,35 @@ class R_CNN :
         self.D1 = Dense(128, activation='relu')(self.F1)
         self.D2 = Dense(self.output_class, activation='softmax')(self.D1)
 
-        self.model = keras.models.Model(inputs=self.input_image, outputs=self.D2)
-        self.model.compile(loss='categorical_crossentropy', optimizer='sgd')
+        self.CNNmodel = keras.models.Model(inputs=self.input_image, outputs=self.D2)
+        self.CNNmodel.compile(loss='categorical_crossentropy', optimizer='sgd')
+
+        self.model = keras.models.Model(inputs=self.input_image, outputs=self.C5)
+        self.model.compile(loss='mean_squared_error', optimizer='sgd')
         return CNN_layers
 
+    def preTrain(self, input_images_dir, input_images_classes) :
+        """
+        전체 모델중 CNN의 weight를 미리 학습
+        """
+        input_images_names = os.listdir(input_images_dir)
+
+        idx = 0
+        for input_image_name in input_images_names :
+            input_image = skimage.io.imread(input_image_name)
+            self.CNNmodel.fit(x=input_image, y=input_images_classes[idx], epochs=2, batch_size=1)
+            idx += 0
+
+    def RegionShuffle(class_regions, background_regions) :
+
+        shuffled_regions = class_regions + background_regions
+
+        return shuffled_regions
+
+
     ## model 훈련
-    def TrainCNN(self, input_images_dir, gtBBoxes) :
+    def TrainCNN(self, input_images_dir, input_images_classes, gtBBoxes,) :
+
 
         ## 1. image directory에서 이미지들 불러오기
         ## 2. (필요시) 픽셀값 0 ~ 1 normalize
@@ -202,6 +242,16 @@ class R_CNN :
         ## 7. positive class와 negative class의 비율 조절
         ## 8. ResNet 모델 학습
 
+        self.preTrain(input_images_dir, input_images_classes)
+
+        input_images_names = os.listdir(input_images_dir)
+
+        for input_image_name in input_images_names :
+            input_image = skimage.io.imread(input_image_name)
+            proposalclassRegions, backgroundclassRegions = self.scRegionProposal(input_image, gtBBoxes)
+
+
+        feature_vectors = self.model.predict(x=)
 
 
 
@@ -209,6 +259,8 @@ class R_CNN :
 
     ## image test
     def TestRCNN(self, input_image) :
+
+
         return None
 
     ## model 저장
